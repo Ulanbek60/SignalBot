@@ -1,0 +1,18 @@
+version: '3.9'
+
+services:
+  signalbot:
+    build: .
+    container_name: signal-bot
+    restart: unless-stopped
+    env_file: .env            # удобно хранить токен не в compose
+    ports:
+      - "5000:5000"           # веб-дашборд
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5000/api/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - ./buy_signal.jpg:/app/buy_signal.jpg:ro
+      - ./sell_signal.jpg:/app/sell_signal.jpg:ro
