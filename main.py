@@ -138,12 +138,8 @@ def ensure_polling_mode():
 
 # ---- helpers to make buttons work from photos too ----
 def edit_or_send(chat_id, message_id, text, keyboard):
-    """Пытаемся отредактировать, если не получилось (фото) — удаляем и шлём новое."""
-    jr = edit_message(chat_id, message_id, text, keyboard)
-    if not isinstance(jr, dict) or not jr.get("ok"):
-        delete_message(chat_id, message_id)
-        return send_telegram_message(chat_id, text, keyboard)
-    return jr
+    return send_telegram_message(chat_id, text, keyboard)
+
 
 # ---------------- Alpha Vantage ----------------
 def get_forex_data_from_api(symbol):
@@ -313,8 +309,7 @@ def handle_callback_query(callback_query):
                 edit_or_send(chat_id, message_id, "Сначала выберите пару", None)
                 return
 
-            # удаляем сообщение с кнопками таймфрейма
-            delete_message(chat_id, message_id)
+            edit_message(chat_id, message_id, f"Вы выбрали таймфрейм: {timeframe}")
 
             # отправляем сообщение-таймер и обновляем его 5→1
             resp = send_telegram_message(chat_id, "⏳ Подготовка сигнала… 5 сек")
@@ -337,8 +332,8 @@ def handle_callback_query(callback_query):
             }
 
             # убираем таймер и отправляем фото
-            if timer_msg_id:
-                delete_message(chat_id, timer_msg_id)
+            # if timer_msg_id:
+            #     delete_message(chat_id, timer_msg_id)
             send_telegram_photo(chat_id, photo_path, signal_text, keyboard)
             return
 
