@@ -77,7 +77,7 @@ app = Flask(__name__)
 
 # ---------------- State ----------------
 bot_status = {"running": False, "error": None, "start_time": None}
-user_data = {}  # {user_id: {...}}
+user_data = {}  # {user_id: {"lang":..., "activated":..., "last_signal_msg_id":...}}
 
 # ---------------- Telegram API helpers ----------------
 def tg_api(method: str, **params):
@@ -105,6 +105,14 @@ def answer_callback(callback_id):
 
 def delete_message(chat_id, message_id):
     return tg_api("deleteMessage", chat_id=chat_id, message_id=message_id)
+
+def remove_inline_keyboard(chat_id, message_id):
+    """Снимаем клавиатуру у существующего сообщения (текст/фото остаются)."""
+    try:
+        return tg_api("editMessageReplyMarkup", chat_id=chat_id, message_id=message_id, reply_markup={})
+    except Exception as e:
+        logger.warning(f"remove_inline_keyboard warn: {e}")
+        return None
 
 def get_telegram_updates(offset=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
@@ -136,10 +144,15 @@ def ensure_polling_mode():
         logger.info("Webhook is set, deleting …")
         tg_api("deleteWebhook")
 
-# ---- helpers to make buttons work from photos too ----
-def edit_or_send(chat_id, message_id, text, keyboard):
+# ---- helpers to не копить меню ----
+def delete_and_send(chat_id, message_id, text, keyboard=None):
+    """Удаляем текущее (обычно меню) и отправляем новое."""
+    delete_message(chat_id, message_id)
     return send_telegram_message(chat_id, text, keyboard)
 
+def edit_or_send(chat_id, message_id, text, keyboard):
+    """Для меню: удаляем старое сообщение и шлём новое, чтобы история не засорялась."""
+    return delete_and_send(chat_id, message_id, text, keyboard)
 
 # ---------------- Alpha Vantage ----------------
 def get_forex_data_from_api(symbol):
@@ -259,10 +272,17 @@ def handle_callback_query(callback_query):
         data = callback_query.get("data", "")
         logger.info(f"Callback from {user_id}: {data}")
 
+        # отдать мгновенный ответ Telegram
         answer_callback(callback_query["id"])
+
+        # всегда снимаем клавиатуру у нажатого сообщения (чтобы кнопки исчезали)
+        remove_inline_keyboard(chat_id, message_id)
 
         ud = user_data.setdefault(user_id, {"lang": "ru", "activated": False})
         lang = ud.get("lang", "ru")
+
+        # если это не последний сигнал — это меню => будем удалять сообщение при переходе
+        is_signal_message = (ud.get("last_signal_msg_id") == message_id)
 
         if data.startswith("lang_"):
             ud["lang"] = data.split("_", 1)[1]
@@ -275,8 +295,7 @@ def handle_callback_query(callback_query):
             txt = ("Добро пожаловать! Для начала работы зарегистрируйтесь по ссылке ниже.\n\nПосле регистрации отправьте код."
                    if ud["lang"] == "ru" else
                    "Welcome! To get started, register using the link below.\n\nAfter registration, send the activation code.")
-            edit_or_send(chat_id, message_id, txt, keyboard)
-            return
+            return delete_and_send(chat_id, message_id, txt, keyboard)
 
         if data.startswith("type_"):
             asset_type = data.split("_", 1)[1]
@@ -287,8 +306,15 @@ def handle_callback_query(callback_query):
                 row = [{"text": f"{p} {f}", "callback_data": f"pair_{p}"} for p, f in pairs[i:i+3]]
                 keyboard["inline_keyboard"].append(row)
             keyboard["inline_keyboard"].append([{"text": "← Назад" if lang == "ru" else "← Back", "callback_data": "main_menu"}])
-            edit_or_send(chat_id, message_id, "Выберите валютную пару:" if lang == "ru" else "Choose a currency pair:", keyboard)
-            return
+            if not is_signal_message:
+                return delete_and_send(chat_id, message_id,
+                                       "Выберите валютную пару:" if lang == "ru" else "Choose a currency pair:",
+                                       keyboard)
+            else:
+                # если кнопка жалась на сигнале — сам сигнал оставляем, новое меню отправляем отдельным сообщением
+                return send_telegram_message(chat_id,
+                                             "Выберите валютную пару:" if lang == "ru" else "Choose a currency pair:",
+                                             keyboard)
 
         if data.startswith("pair_"):
             pair = data.split("_", 1)[1]
@@ -299,17 +325,27 @@ def handle_callback_query(callback_query):
             for i in range(0, len(tms), 3):
                 keyboard["inline_keyboard"].append([{"text": t, "callback_data": f"time_{t}"} for t in tms[i:i+3]])
             keyboard["inline_keyboard"].append([{"text": "← Назад" if lang == "ru" else "← Back", "callback_data": f"type_{asset_type}"}])
-            edit_or_send(chat_id, message_id, "Выберите время сделки:" if lang == "ru" else "Choose trade time:", keyboard)
-            return
+            if not is_signal_message:
+                return delete_and_send(chat_id, message_id,
+                                       "Выберите время сделки:" if lang == "ru" else "Choose trade time:",
+                                       keyboard)
+            else:
+                return send_telegram_message(chat_id,
+                                             "Выберите время сделки:" if lang == "ru" else "Choose trade time:",
+                                             keyboard)
 
         if data.startswith("time_"):
             timeframe = data.split("_", 1)[1]
             pair = ud.get("selected_pair")
             if not pair:
-                edit_or_send(chat_id, message_id, "Сначала выберите пару", None)
-                return
+                if not is_signal_message:
+                    return delete_and_send(chat_id, message_id, "Сначала выберите пару", None)
+                else:
+                    return send_telegram_message(chat_id, "Сначала выберите пару", None)
 
-            edit_message(chat_id, message_id, f"Вы выбрали таймфрейм: {timeframe}")
+            # Меню (если это оно) удаляем, сигнал оставляем
+            if not is_signal_message:
+                delete_message(chat_id, message_id)
 
             # отправляем сообщение-таймер и обновляем его 5→1
             resp = send_telegram_message(chat_id, "⏳ Подготовка сигнала… 5 сек")
@@ -326,15 +362,21 @@ def handle_callback_query(callback_query):
             keyboard = {
                 "inline_keyboard": [
                     [{"text": "🔄 Новый сигнал" if lang == "ru" else "🔄 New signal", "callback_data": f"pair_{pair}"}],
-                    [{"text": "← Назад" if lang == "ru" else "← Back", "callback_data": f"pair_{pair}"}],
+                    [{"text": "← Назад" if lang == "ru" else "← Back", "callback_data": f"type_{ud.get('asset_type','FOREX')}"}],
                     [{"text": "🏠 Главное меню" if lang == "ru" else "🏠 Main menu", "callback_data": "main_menu"}]
                 ]
             }
 
-            # убираем таймер и отправляем фото
-            # if timer_msg_id:
-            #     delete_message(chat_id, timer_msg_id)
-            send_telegram_photo(chat_id, photo_path, signal_text, keyboard)
+            # убираем таймер
+            if timer_msg_id:
+                delete_message(chat_id, timer_msg_id)
+
+            # отправляем СИГНАЛ (он остаётся в истории)
+            sent = send_telegram_photo(chat_id, photo_path, signal_text, keyboard)
+            try:
+                ud["last_signal_msg_id"] = sent["result"]["message_id"]
+            except Exception:
+                ud["last_signal_msg_id"] = None
             return
 
         if data == "main_menu":
@@ -344,8 +386,14 @@ def handle_callback_query(callback_query):
                     [{"text": "ОТС" if lang == "ru" else "OTC", "callback_data": "type_OTC"}],
                 ]
             }
-            edit_or_send(chat_id, message_id, "Выберите тип актива:" if lang == "ru" else "Choose an asset type:", keyboard)
-            return
+            if not is_signal_message:
+                return delete_and_send(chat_id, message_id,
+                                       "Выберите тип актива:" if lang == "ru" else "Choose an asset type:",
+                                       keyboard)
+            else:
+                return send_telegram_message(chat_id,
+                                             "Выберите тип актива:" if lang == "ru" else "Choose an asset type:",
+                                             keyboard)
 
     except Exception as e:
         logger.error(f"Error handling callback: {e}")
