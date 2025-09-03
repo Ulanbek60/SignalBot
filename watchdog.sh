@@ -1,18 +1,22 @@
 #!/bin/bash
 
-BOT_URL="http://127.0.0.1:5000"
-STATUS_URL="$BOT_URL/api/status"
-START_URL="$BOT_URL/api/start"
+# Массив ботов: URL дашборда
+BOTS=("http://127.0.0.1:5000" "http://127.0.0.1:5001")
 
 while true; do
-    running=$(curl -s "$STATUS_URL" | grep -o '"running":true')
+    for BOT_URL in "${BOTS[@]}"; do
+        STATUS_URL="$BOT_URL/api/status"
+        START_URL="$BOT_URL/api/start"
 
-    if [ "$running" != '"running":true' ]; then
-        echo "$(date) — Bot is not running, starting..."
-        curl -s "$START_URL" >/dev/null
-    else
-        echo "$(date) — Bot is running."
-    fi
+        running=$(curl -s "$STATUS_URL" | grep -o '"running":true')
+
+        if [ "$running" != '"running":true' ]; then
+            echo "$(date) — Bot at $BOT_URL is not running, starting..."
+            curl -s "$START_URL" >/dev/null
+        else
+            echo "$(date) — Bot at $BOT_URL is running."
+        fi
+    done
 
     sleep 300  # проверка каждые 5 минут
 done

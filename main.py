@@ -35,7 +35,7 @@ if not TELEGRAM_BOT_TOKEN:
 
 TELEGRAM_BOT_TOKEN = TELEGRAM_BOT_TOKEN.strip()
 
-ACTIVATION_CODE = "105105105"
+ACTIVATION_CODE = "105103105"
 
 # можно оставить "demo" для теста, для прод — подставь свои ключи
 ALPHA_VANTAGE_API_KEYS = [

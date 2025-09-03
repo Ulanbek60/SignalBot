@@ -1,0 +1,18 @@
+version: '3.9'
+
+services:
+  signalbot_client:
+    build: .
+    container_name: signal-bot-client
+    restart: unless-stopped
+    env_file: .env.client
+    ports:
+      - "5001:5000"  # внешний порт 5001, внутренний 5000
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5000/api/status"]  # проверяем внутренний порт 5000
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - ./buy_signal.jpg:/app/buy_signal.jpg:ro
+      - ./sell_signal.jpg:/app/sell_signal.jpg:ro
